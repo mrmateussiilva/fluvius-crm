@@ -32,6 +32,7 @@ export interface ComposerHandle {
 
 interface Props {
   conversationId: string;
+  isGroup?: boolean;
   disabled?: boolean;
   /** Set true when contact is blocked / anonymized — explanation shown. */
   blockedReason?: string | null;
@@ -63,6 +64,7 @@ interface Props {
 export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
   {
     conversationId,
+    isGroup = false,
     disabled,
     blockedReason,
     janelaFechada,
@@ -204,7 +206,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
           mode === "note" && "border-warning/40 bg-warning-bg",
         )}
       >
-        {mode === "reply" && (
+        {mode === "reply" && !isGroup && (
           <ReplyReviewPanel conversationId={conversationId} disabled={isDisabled} />
         )}
         <TemplateMenu

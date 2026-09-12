@@ -36,12 +36,8 @@ import { classificarFalhaDeAlcance, explicarFalhaDeAlcance } from "@/lib/net/alc
  * contêiner e entrado no banco DELE. Cortar na fonte é a única versão que
  * economiza as três coisas.
  *
- * ─── Grupos entram na lista, e isso não muda o produto ──────────────────────
- *
- * O CLAUDE.md manda pular o vínculo de CRM quando o chat termina em `@g.us`.
- * Já hoje nenhuma mensagem de grupo vira conversa, contato ou lead: o
- * comportamento visível é idêntico com ou sem esta linha. O que muda é parar
- * de pagar por elas. Quem um dia quiser grupos inverte a chave.
+ * Grupos entram na Inbox para atendimento manual; estados, difusão e canais
+ * continuam filtrados na origem.
  */
 export const CONVERSAS_IGNORADAS = {
   /** Os "estados" que os contatos publicam. Sozinhos eram 69% do arquivo. */
@@ -50,8 +46,8 @@ export const CONVERSAS_IGNORADAS = {
   broadcast: true,
   /** Canais / newsletters. */
   channels: true,
-  /** Ver o parágrafo acima: o CRM já os descarta na entrada. */
-  groups: true,
+  /** MVP de grupos: histórico e resposta manual, sem lead nem IA. */
+  groups: false,
 } as const;
 
 /**
@@ -137,6 +133,22 @@ const sessionSnapshotSchema = z.object({
 
 export type WahaSessionSnapshot = z.infer<typeof sessionSnapshotSchema>;
 type SessionOperation = "create" | "start" | "stop" | "logout" | "delete";
+
+const groupInfoSchema = z.object({
+  id: z.string(),
+  subject: z.string().nullable().optional().transform((value) => value ?? null),
+  size: z.number().int().nonnegative().nullable().optional().transform((value) => value ?? null),
+  owner: z.string().nullable().optional().transform((value) => value ?? null),
+  creation: z.number().int().nullable().optional().transform((value) => value ?? null),
+  isCommunity: z.boolean().optional().default(false),
+  announce: z.boolean().optional().default(false),
+  restrict: z.boolean().optional().default(false),
+}).passthrough();
+
+export type WahaGroupInfo = z.infer<typeof groupInfoSchema>;
+export type WahaGroupInfoResult =
+  | { ok: true; info: WahaGroupInfo }
+  | { ok: false };
 
 /** Mantém o prefixo/status que checkHealth e os callers já classificam. */
 export class WahaSessionError extends Error {
@@ -236,7 +248,10 @@ export class WahaClient {
     if (ignore === undefined) return true; // sessão legada; convergência preserva webhooks
     if (!ignore || typeof ignore !== "object" || Array.isArray(ignore)) return false;
     return Object.entries(CONVERSAS_IGNORADAS).every(([key, value]) =>
-      !(key in ignore) || (ignore as Record<string, unknown>)[key] === value);
+      !(key in ignore) || (ignore as Record<string, unknown>)[key] === value ||
+      // A configuração anterior do produto ignorava grupos. É migrável no
+      // fluxo de reconexão, sem afrouxar identidade, engine ou outros filtros.
+      (key === "groups" && (ignore as Record<string, unknown>)[key] === true));
   }
 
   /** Porta granular para a futura reserva: created nunca significa ownership. */
@@ -333,8 +348,8 @@ export class WahaClient {
    * "If the session is not in a STOPPED status, it will be stopped and started
    * with the new configuration." Sem QR novo — as credenciais moram em disco —
    * mas é uma janela de segundos sem canal. Aceitável aqui porque este caminho
-   * só roda dentro de `startSession`, que já é o momento em que a sessão está
-   * sendo (re)iniciada de propósito.
+   * só roda nos fluxos de conexão/reconexão (`startSession` ou
+   * `connectWahaChannel`), quando a sessão está sendo iniciada de propósito.
    *
    * NÃO lança: é melhoria de custo, não condição de envio. Uma versão do WAHA
    * que não conheça a rota faria toda reconexão falhar por causa de uma
@@ -465,6 +480,22 @@ export class WahaClient {
       return digitos.length >= 8 ? `+${digitos}` : null;
     } catch {
       return null;
+    }
+  }
+
+  /** Metadata do grupo, sem participantes: só o suficiente para nomear a Inbox. */
+  async getGroupInfo(session: string, groupId: string): Promise<WahaGroupInfoResult> {
+    try {
+      const res = await this.fetchComTeto(
+        `${this.baseUrl}/api/${encodeURIComponent(session)}/groups/${encodeURIComponent(groupId)}`,
+        { headers: { "X-Api-Key": this.apiKey, Accept: "application/json" } },
+      );
+      if (!res.ok) return { ok: false };
+      const parsed = groupInfoSchema.safeParse(await res.json().catch(() => null));
+      if (!parsed.success) return { ok: false };
+      return { ok: true, info: parsed.data };
+    } catch {
+      return { ok: false };
     }
   }
 

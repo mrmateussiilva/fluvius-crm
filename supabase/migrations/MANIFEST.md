@@ -286,3 +286,5 @@ To re-apply on a fresh Supabase project, replay the migrations in version order 
 
 | `20260907060000` | `0230_reserva_pre_go_live` | A reserva transacional de novos canais WAHA preserva o pré-go-live da plataforma; retry mantém política e identidade existentes. Forward-fix da integração, sem alterar 0228 aplicada. |
 | `20260909180000` | `0232_waha_session_name_dentro_do_limite` | `waha_session_name` gerado com 69 caracteres estourava o limite de 54 do WAHA (`waha_create_400`) — toda instalação nova batia nisso ao conectar o 1º WhatsApp. Encurtado para 33 caracteres; auto-cura remove sessões de onboarding presas por este bug. |
+
+| `20260910230000` | `0233_waha_grupos_mvp` | RPC idempotente para contato sintético por organização/grupo e conversa por sessão; índices únicos parciais e execução restrita a service_role. SQL preparado; não aplicado nesta sessão. |

@@ -17,7 +17,7 @@ const receiptSchema = z.object({
 export class ChannelConnectionError extends Error {
   constructor(public readonly code: string, public readonly status: number, public readonly technical?: Record<string, unknown>) { super(code); }
 }
-type Transport = Pick<WahaClient, "createSession" | "startExistingSession" | "stopSession">;
+type Transport = Pick<WahaClient, "createSession" | "startExistingSession" | "stopSession" | "convergirConfigDaSessao">;
 export interface ConnectChannelInput {
   organizationId: string; idempotencyKey: string; userId: string; requestId: string;
   displayName?: string; onboarding?: boolean; restart?: boolean;
@@ -57,6 +57,11 @@ export async function connectWahaChannel(authDb: SupabaseClient, serviceDb: Supa
     const creation = await waha.createSession(channel.waha_session_name);
     created = creation.created;
     if (created) await finish("remote_created");
+    const ignore = creation.session.config?.ignore;
+    if (!created && ignore && typeof ignore === "object" && !Array.isArray(ignore)
+      && (ignore as Record<string, unknown>).groups === true) {
+      await waha.convergirConfigDaSessao(channel.waha_session_name);
+    }
     const remote = await waha.startExistingSession(channel.waha_session_name);
     if (remote.name !== channel.waha_session_name || !["STARTING", "SCAN_QR_CODE", "WORKING"].includes(remote.status)) {
       throw new Error("connection_postcondition_failed");

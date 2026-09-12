@@ -55,14 +55,15 @@ const wahaMediaSchema = z.looseObject({
  * o número. A leitura de que "@lid é opaco por privacidade" valia para o
  * `from`, não para o payload inteiro.
  *
- * Só esses dois ganham tipo: são os que `telefoneAlternativoDe` mede com
- * `.length` e `.endsWith` sem guarda própria. `remoteJid`, `participant`,
+ * Os endereços alternativos são lidos por `telefoneAlternativoDe` com
+ * `.length` e `.endsWith`; `participant` identifica o autor do grupo. `remoteJid`,
  * `addressingMode`, `fromMe` e `id` chegam nos payloads reais e seguem intactos
  * pelo loose — ninguém os lê.
  */
 const wahaKeySchema = z.looseObject({
   remoteJidAlt: texto,
   participantAlt: texto,
+  participant: texto,
 });
 
 export const wahaPayloadSchema = z.looseObject({
@@ -70,6 +71,8 @@ export const wahaPayloadSchema = z.looseObject({
   from: texto,
   to: texto,
   fromMe: booleano,
+  author: texto,
+  participant: texto,
   body: texto,
   type: texto,
   hasMedia: booleano,

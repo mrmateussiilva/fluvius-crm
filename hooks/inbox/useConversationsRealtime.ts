@@ -27,6 +27,8 @@ export interface ContactSummary {
    * atendimento aparece. Opcional: conversas em cache de antes do campo existir.
    */
   force_human?: boolean | null;
+  /** Quantidade segura de membros do grupo WAHA, extraída no backend. */
+  group_size?: number | null;
 }
 
 /**

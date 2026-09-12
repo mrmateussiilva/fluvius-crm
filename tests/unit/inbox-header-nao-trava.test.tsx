@@ -67,11 +67,12 @@ const conversation = {
   contacts: { id: "ct-1", display_name: "Fulana", name: null, phone_number: "5511999" },
 } as unknown as React.ComponentProps<typeof ConversationHeader>["conversation"];
 
-function renderHeader() {
+function renderHeader(isGroup = false, groupSize?: number | null) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const contacts = { ...conversation.contacts, group_size: groupSize } as typeof conversation.contacts;
   return render(
     <QueryClientProvider client={client}>
-      <ConversationHeader conversation={conversation} />
+      <ConversationHeader conversation={{ ...conversation, contacts, is_group: isGroup }} />
     </QueryClientProvider>,
   );
 }
@@ -127,4 +128,28 @@ describe("header do inbox — não trava a largura da tela", () => {
       "sem `xl:hidden`, a duplicata volta e o header ganha uma segunda linha em 1280px",
     ).toContain("xl:hidden");
   });
+});
+
+
+it("grupo tem indicador e não oferece devolver ao automático", () => {
+  renderHeader(true);
+  expect(screen.getByText("Grupo")).toBeInTheDocument();
+  expect(screen.queryByTestId("devolver-ao-automatico")).not.toBeInTheDocument();
+  expect(screen.queryByText("Automático")).not.toBeInTheDocument();
+});
+
+it("grupo com size=2 mostra participantes no header", () => {
+  renderHeader(true, 2);
+  expect(screen.getByText("Grupo • 2 participantes")).toBeInTheDocument();
+});
+
+it("grupo com size=1 usa singular no header", () => {
+  renderHeader(true, 1);
+  expect(screen.getByText("Grupo • 1 participante")).toBeInTheDocument();
+});
+
+it("grupo sem size mostra só Grupo", () => {
+  renderHeader(true, null);
+  expect(screen.getByText("Grupo")).toBeInTheDocument();
+  expect(screen.queryByText(/participante/)).not.toBeInTheDocument();
 });

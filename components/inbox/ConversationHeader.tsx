@@ -51,6 +51,12 @@ const STATUS_LABEL: Record<string, string> = {
   archived: "Arquivada",
 };
 
+function rotuloDoGrupo(size: number | null | undefined, t: (key: string) => string): string {
+  if (typeof size !== "number" || !Number.isInteger(size) || size <= 0) return t("Grupo");
+  const participantes = size === 1 ? t("participante") : t("participantes");
+  return `${t("Grupo")} • ${size} ${participantes}`;
+}
+
 export function ConversationHeader({ conversation }: Props) {
   const t = useT();
   const { user } = useAuth();
@@ -67,6 +73,7 @@ export function ConversationHeader({ conversation }: Props) {
 
   const c = conversation.contacts ?? null;
   const displayName = rotuloDoContato(c, t);
+  const groupLabel = conversation.is_group ? rotuloDoGrupo(c?.group_size, t) : null;
   const phone = c?.phone_number ? phoneForDisplay(c.phone_number) : null;
   const status = conversation.status;
   const isMineAssigned = conversation.assigned_to_user_id === user.id;
@@ -90,7 +97,7 @@ export function ConversationHeader({ conversation }: Props) {
     bot_silenced_until: conversation.bot_silenced_until ?? null,
     force_human: c?.force_human ?? null,
     is_blocked: conversation.contacts?.is_blocked ?? null,
-    automaticoDaOrg: automaticoDaOrg.data,
+    automaticoDaOrg: conversation.is_group ? false : automaticoDaOrg.data,
   });
 
   const encerrada = status === "closed" || status === "archived" || status === "resolved";
@@ -109,7 +116,7 @@ export function ConversationHeader({ conversation }: Props) {
    * ninguém pediu para reabrir. Oferecer uma ação que não deveria acontecer é
    * pior que não oferecer nenhuma.
    */
-  const podeDevolver = travaVigente;
+  const podeDevolver = !conversation.is_group && travaVigente;
   /**
    * PAUSAR só aparece quando pausar é um gesto DIFERENTE de assumir.
    *
@@ -145,6 +152,7 @@ export function ConversationHeader({ conversation }: Props) {
       <div className="min-w-0">
         <div className="flex items-center gap-2">
           <h2 className="truncate text-sm font-semibold">{displayName}</h2>
+          {groupLabel && <span className="text-xs text-muted-foreground">{groupLabel}</span>}
           <Badge variant="outline" className="h-4 px-1.5 text-[10px]">
             {t(STATUS_LABEL[status] ?? status)}
           </Badge>

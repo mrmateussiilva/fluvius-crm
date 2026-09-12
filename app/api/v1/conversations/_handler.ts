@@ -88,9 +88,31 @@ const SELECT_COLS = `
   snooze_until, created_at, updated_at,
   bot_silenced_until, last_handoff_at,
   comando_da_conversa,
-  contacts:contact_id (id, display_name, name, phone_number, is_anonymized, tags, is_blocked, avatar_storage_path, force_human),
+  contacts:contact_id (id, display_name, name, phone_number, is_anonymized, tags, is_blocked, avatar_storage_path, force_human, source_metadata),
   channel_sessions:channel_session_id (phone_number, display_name, provider)
 `;
+
+function tamanhoSeguroDoGrupo(sourceMetadata: unknown): number | null {
+  if (!sourceMetadata || typeof sourceMetadata !== "object" || Array.isArray(sourceMetadata)) return null;
+  const value = (sourceMetadata as Record<string, unknown>).waha_group_size;
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
+}
+
+function conversaSemMetadataBruta(row: unknown): Conversation {
+  const conv = row as Conversation & {
+    contacts?: (Record<string, unknown> & { source_metadata?: unknown }) | null;
+  };
+  const contact = conv.contacts;
+  if (!contact || typeof contact !== "object") return conv;
+  const { source_metadata: sourceMetadata, ...safeContact } = contact;
+  return {
+    ...conv,
+    contacts: {
+      ...safeContact,
+      group_size: tamanhoSeguroDoGrupo(sourceMetadata),
+    },
+  } as Conversation;
+}
 
 interface CursorPayload {
   sort: string | null;
@@ -340,7 +362,7 @@ export async function listConversationsHandler(
     throw new ApiError(500, "internal_error", undefined, ctx.requestId, error.message);
   }
 
-  const rows = (data ?? []) as unknown as Conversation[];
+  const rows = (data ?? []).map(conversaSemMetadataBruta);
   const hasMore = rows.length > q.limit;
   const page = hasMore ? rows.slice(0, q.limit) : rows;
   const last = page[page.length - 1];
@@ -380,7 +402,7 @@ export async function getConversationHandler(
       traduzir("Conversa não encontrada.", ctx.idioma ?? "pt-BR"),
     );
   }
-  return data as unknown as Conversation;
+  return conversaSemMetadataBruta(data);
 }
 
 // ---------------------------------------------------------------------------
@@ -462,7 +484,7 @@ export async function patchConversationHandler(
     );
   }
 
-  const conv = data as unknown as Conversation;
+  const conv = conversaSemMetadataBruta(data);
 
   const a = actorAuditPayload(ctx.actor);
 
@@ -527,5 +549,5 @@ export async function markConversationReadHandler(
       traduzir("Conversa não encontrada.", ctx.idioma ?? "pt-BR"),
     );
   }
-  return data as unknown as Conversation;
+  return conversaSemMetadataBruta(data);
 }

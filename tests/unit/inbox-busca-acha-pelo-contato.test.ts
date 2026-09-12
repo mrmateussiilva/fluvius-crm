@@ -48,7 +48,7 @@ interface Chamada {
  * metade do conserto é a consulta NOVA em `contacts`, e um registro achatado não
  * distinguiria um `ilike` lá de um `ilike` em `conversations`.
  */
-function fakeSupabase(contatosEncontrados: Array<{ id: string }>) {
+function fakeSupabase(contatosEncontrados: Array<{ id: string }>, conversas: unknown[] = []) {
   const chamadas: Chamada[] = [];
   const client = {
     from: (tabela: string) => {
@@ -58,7 +58,7 @@ function fakeSupabase(contatosEncontrados: Array<{ id: string }>) {
           get(_t, prop) {
             if (prop === "then") {
               return (ok: (v: unknown) => unknown) =>
-                ok({ data: tabela === "contacts" ? contatosEncontrados : [], error: null });
+                ok({ data: tabela === "contacts" ? contatosEncontrados : conversas, error: null });
             }
             return (...args: unknown[]) => {
               chamadas.push({ tabela, metodo: String(prop), args });
@@ -161,6 +161,31 @@ describe("busca do inbox — o contato entra no predicado", () => {
       chamadas.filter((x) => x.tabela === "contacts"),
       "consultou contatos sem ninguém ter buscado — uma ida ao banco por listagem",
     ).toEqual([]);
+  });
+
+  it("grupo recebe group_size sem expor source_metadata bruto ao frontend", async () => {
+    const { client } = fakeSupabase([], [{
+      id: "conv-1",
+      organization_id: "org-1",
+      contact_id: "contact-1",
+      channel_session_id: "session-1",
+      status: "open",
+      last_message_at: "2026-09-11T00:00:00.000Z",
+      is_group: true,
+      contacts: {
+        id: "contact-1",
+        display_name: "Tess",
+        source_metadata: {
+          waha_group_size: 2,
+          waha_group_owner: "owner@lid",
+        },
+      },
+    }]);
+    const result = await listConversationsHandler(client, ctx, { limit: 50 } as never);
+    const contact = result.conversations[0] as unknown as { contacts: Record<string, unknown> };
+    expect(contact.contacts.group_size).toBe(2);
+    expect(contact.contacts).not.toHaveProperty("source_metadata");
+    expect(JSON.stringify(contact.contacts)).not.toContain("owner@lid");
   });
 });
 

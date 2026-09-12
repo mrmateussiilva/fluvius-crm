@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Grupos WAHA: Inbox manual",
+    "subtitle": "Contato sintético; sem lead ou IA",
+    "output": "whatsapp-grupos.html",
+    "quality_profile": "standard"
+  },
+  "lanes": [
+    {
+      "id": "app",
+      "label": "Aplicativo"
+    },
+    {
+      "id": "db",
+      "label": "Banco"
+    }
+  ],
+  "mainPath": [
+    "waha",
+    "rpc",
+    "history",
+    "composer"
+  ],
+  "nodes": [
+    {
+      "id": "waha",
+      "lane": "app",
+      "col": 0,
+      "type": "service",
+      "label": "lib/waha/ingest.ts: grupo inbound e celular"
+    },
+    {
+      "id": "rpc",
+      "lane": "db",
+      "col": 1,
+      "type": "database",
+      "label": "fn_upsert_wa_group_conversation: contato e conversa"
+    },
+    {
+      "id": "history",
+      "lane": "app",
+      "col": 2,
+      "type": "ui",
+      "label": "Inbox: mensagens, autor e anexos"
+    },
+    {
+      "id": "composer",
+      "lane": "app",
+      "col": 3,
+      "type": "service",
+      "label": "messages/_handler: adapter WAHA usa group_chat_id"
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "from": "waha",
+      "to": "rpc",
+      "label": "org e sessão confiáveis"
+    },
+    {
+      "id": "e2",
+      "from": "rpc",
+      "to": "history",
+      "label": "contact_id obrigatório + mensagem"
+    },
+    {
+      "id": "e3",
+      "from": "history",
+      "to": "composer",
+      "label": "resposta manual"
+    },
+    {
+      "id": "e4",
+      "from": "composer",
+      "to": "waha",
+      "label": "eco e ACK deduplicados"
+    }
+  ]
+}

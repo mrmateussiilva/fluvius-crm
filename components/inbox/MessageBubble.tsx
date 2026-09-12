@@ -1,5 +1,6 @@
 "use client";
 
+import { groupMessageSender } from "@/lib/types/messaging";
 import { useLocaleDeData } from "@/hooks/i18n/useLocaleDeData";
 import { format } from "date-fns";
 import { useT } from "@/hooks/i18n/useT";
@@ -55,6 +56,7 @@ export function MessageBubble({ message, debugCitations, onResponder, citada }: 
   const editada = Boolean(message.edited_at) && !apagada;
   const aiGenerated = isAiGeneratedMessage(message.metadata);
   const citations = extractCitations(message.metadata);
+  const groupSender = !isOutbound ? groupMessageSender(message.metadata) : null;
   const showCitationButton =
     isOutbound && aiGenerated && (debugCitations ?? false);
   const senderLabel = (() => {
@@ -152,6 +154,11 @@ export function MessageBubble({ message, debugCitations, onResponder, citada }: 
                 ? t("Esta mensagem foi apagada")
                 : citada.body?.trim() || t("(sem texto)")}
             </div>
+          </div>
+        )}
+        {groupSender && (
+          <div className="mb-0.5 truncate text-[11px] font-semibold opacity-80">
+            {groupSender}
           </div>
         )}
         {senderLabel && (

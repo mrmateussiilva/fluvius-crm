@@ -19,6 +19,7 @@ import { acelerarPipelineDeEventos } from "@/lib/dev/kick-local-pipeline";
 import { canonicalPhoneBR } from "@/lib/channels/phone-variants";
 import { estamparAtribuicaoDoContato } from "@/lib/leads/atribuicao-de-anuncio";
 import { extrairAtribuicaoWaha } from "@/lib/waha/atribuicao-de-anuncio";
+import { getWahaClient, type WahaGroupInfoResult } from "@/lib/waha/client";
 import type { createAdminClient } from "@/lib/supabase/admin";
 import { ackToStatus } from "@/lib/types/messaging";
 import type { WahaEnvelope, WahaPayload } from "@/lib/waha/envelope";
@@ -108,6 +109,7 @@ async function ehEcoDeEnvioNosso(
 interface Session {
   id: string;
   organization_id: string;
+  waha_session_name?: string | null;
 }
 
 /**
@@ -172,19 +174,17 @@ function semSufixoDeChat(chatId: string): string {
  * Resolve um chatId WAHA em identidade canônica:
  *  - `{number}@c.us` | `@s.whatsapp.net` -> phone E.164 ("+55...")
  *  - `{lid}@lid` -> lid (somente dígitos; número protegido pelo WhatsApp)
- *  - `@g.us` -> group (skip binding CRM — descarte ESPERADO, por doutrina)
+ *  - `@g.us` -> group (contato sintético, sem lead nem IA)
  *  - qualquer outra coisa -> unknown (descarte que DEIXA RASTRO)
  *
  * A quarta variante existe porque este `return` final classificava tudo o que
- * não reconhecia como "grupo", e o ingest descarta grupo: "não sei ler isto"
+ * não reconhecia como "grupo", e o ingest então descartava grupo: "não sei ler isto"
  * virava "descarta calado" — a mesma família do defeito que sumia com a mensagem
  * digitada no celular (PR #108), inclusive o mesmo sintoma de webhook devolvendo
  * 200 sem erro. `@newsletter` e `@broadcast` já existem em produção e caíam
  * aqui; o próximo formato do WhatsApp reproduziria o caso inteiro.
  *
- * Grupo e desconhecido têm o MESMO desfecho (não viram contato) e naturezas
- * opostas: um é decisão de produto, o outro é buraco de conhecimento. Só o
- * segundo é anomalia, então só ele emite evento.
+ * Grupos usam a RPC própria; desconhecidos continuam deixando aviso operacional.
  */
 
 export function parseChatId(chatId: string): ChatIdentity {
@@ -558,6 +558,219 @@ async function mensagemIngeridaPorExternalId(
   return data ?? null;
 }
 
+/** Grupos têm identidade própria; nunca passam pela resolução de pessoa/lead. */
+async function upsertGroupConversation(admin: Admin, session: Session, chatId: string) {
+  const { data, error } = await admin.rpc("fn_upsert_wa_group_conversation" as never, {
+    p_org: session.organization_id,
+    p_session: session.id,
+    p_group_chat_id: chatId,
+  } as never);
+  if (error) {
+    logger.error("waha.ingest: group conversation upsert failed", { code: error.code });
+    return null;
+  }
+  const row = (data as { contact_id: string; conversation_id: string }[] | null)?.[0];
+  return row ?? null;
+}
+
+function objetoJson(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return { ...(value as Record<string, unknown>) };
+}
+
+function stringNaoVazia(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function metadataDeGrupoJaSincronizada(metadata: Record<string, unknown>): boolean {
+  return Boolean(stringNaoVazia(metadata.waha_group_metadata_synced_at));
+}
+
+const JANELA_DE_RETRY_METADATA_DE_GRUPO_MS = 10 * 60 * 1000;
+
+function tentativaRecenteDeMetadataDeGrupo(metadata: Record<string, unknown>, nowMs = Date.now()): boolean {
+  const raw = stringNaoVazia(metadata.waha_group_metadata_last_attempt_at);
+  if (!raw) return false;
+  const last = Date.parse(raw);
+  if (!Number.isFinite(last)) return false;
+  return nowMs - last < JANELA_DE_RETRY_METADATA_DE_GRUPO_MS;
+}
+
+function metadataDoGrupoAtualizada(
+  metadataAtual: Record<string, unknown>,
+  chatId: string,
+  result: WahaGroupInfoResult,
+): { metadata: Record<string, unknown>; subject: string | null; ok: boolean } {
+  const now = new Date().toISOString();
+  if (!result.ok) {
+    return {
+      ok: false,
+      subject: null,
+      metadata: {
+        ...metadataAtual,
+        waha_group: true,
+        waha_group_chat_id: chatId,
+        waha_group_metadata_last_attempt_at: now,
+      },
+    };
+  }
+  const info = result.info;
+  const subject = stringNaoVazia(info.subject);
+  return {
+    ok: true,
+    subject,
+    metadata: {
+      ...metadataAtual,
+      waha_group: true,
+      waha_group_chat_id: chatId,
+      waha_group_metadata_last_attempt_at: now,
+      waha_group_metadata_synced_at: now,
+      waha_group_subject: subject,
+      waha_group_size: info.size,
+      waha_group_owner: info.owner,
+      waha_group_creation: info.creation,
+      waha_group_is_community: info.isCommunity,
+      waha_group_announce: info.announce,
+      waha_group_restrict: info.restrict,
+    },
+  };
+}
+
+async function enriquecerContatoDeGrupo(
+  admin: Admin,
+  session: Session,
+  contactId: string,
+  chatId: string,
+): Promise<void> {
+  try {
+    const { data: contact, error: readError } = await admin
+      .from("contacts")
+      .select("id, display_name, source_metadata")
+      .eq("organization_id", session.organization_id)
+      .eq("id", contactId)
+      .maybeSingle();
+
+    if (readError) {
+      logger.warn("waha.ingest: group contact metadata read failed", { code: readError.code });
+      return;
+    }
+    if (!contact) return;
+
+    const metadataAtual = objetoJson((contact as { source_metadata?: unknown }).source_metadata);
+    if (metadataDeGrupoJaSincronizada(metadataAtual)) return;
+    if (tentativaRecenteDeMetadataDeGrupo(metadataAtual)) return;
+
+    const sessionName = stringNaoVazia(session.waha_session_name);
+    if (!sessionName) {
+      logger.warn("waha.ingest: group metadata skipped without session name", { session_id: session.id });
+      return;
+    }
+
+    const client = getWahaClient();
+    if (!client) {
+      logger.warn("waha.ingest: group metadata skipped without waha client", { session_id: session.id });
+      return;
+    }
+
+    const result = await client.getGroupInfo(sessionName, chatId);
+    if (!result.ok) {
+      logger.warn("waha.ingest: group metadata unavailable", { session_id: session.id });
+    }
+
+    const { metadata, subject } = metadataDoGrupoAtualizada(metadataAtual, chatId, result);
+    const update: Record<string, unknown> = { source_metadata: metadata };
+    if (subject) update.display_name = subject;
+
+    const { error: updateError } = await admin
+      .from("contacts")
+      .update(update)
+      .eq("organization_id", session.organization_id)
+      .eq("id", contactId);
+
+    if (updateError) {
+      logger.warn("waha.ingest: group contact metadata update failed", { code: updateError.code });
+    }
+  } catch (error) {
+    logger.warn("waha.ingest: group metadata enrichment failed", {
+      error_name: error instanceof Error ? error.name : "unknown",
+    });
+  }
+}
+
+function groupMetadata(p: WahaPayload, chatId: string) {
+  const sender = [p.author, p.participant, p._data?.key?.participant, p._data?.key?.participantAlt]
+    .find((value) => typeof value === "string" && value.trim().length > 0);
+  return {
+    raw_type: p.type,
+    ack_name: p.ackName,
+    is_group: true,
+    group_chat_id: chatId,
+    group_sender_id: sender ?? null,
+    group_sender_name: notifyNameOf(p),
+  };
+}
+
+async function handleGroupInbound(
+  admin: Admin,
+  session: Session,
+  p: WahaPayload,
+  requestId: string,
+  chatId: string,
+): Promise<void> {
+  if (!p.id?.trim()) return;
+  const texto = bodyOf(p);
+  if (!texto?.trim() && !mediaUrlOf(p) && !p.hasMedia) return;
+  const group = await upsertGroupConversation(admin, session, chatId);
+  if (!group) return;
+  const now = new Date().toISOString();
+  const at = p.timestamp ? new Date(p.timestamp * 1000).toISOString() : now;
+  const { data: message, error } = await admin.from("messages").insert({
+    organization_id: session.organization_id,
+    conversation_id: group.conversation_id,
+    channel_session_id: session.id,
+    contact_id: group.contact_id,
+    external_id: p.id,
+    type: resolveMessageType(p),
+    direction: "inbound",
+    status: "delivered",
+    ack: p.ack ?? null,
+    body: texto,
+    media_url: mediaUrlOf(p),
+    media_mime: mediaMimeOf(p),
+    sent_via: "external_device",
+    sent_at: at,
+    delivered_at: now,
+    metadata: groupMetadata(p, chatId),
+  }).select("id").maybeSingle();
+  if (error) {
+    if (error.code !== "23505") logger.error("waha.ingest: group message insert failed", { code: error.code });
+    return;
+  }
+  await markConversation(admin, session.organization_id, group.conversation_id, "inbound", previewFromMessage(p), at);
+  await audit({
+    action: "message.received",
+    organizationId: session.organization_id,
+    resourceType: "message",
+    requestId,
+    metadata: { conversation_id: group.conversation_id, type: p.type, external_id: p.id },
+  });
+  // Só persistência: grupos não executam efeitos de negócio nem despacho de IA.
+  if (message?.id && mediaUrlOf(p)) {
+    const { error: mediaError } = await admin.rpc("emit_event" as never, {
+      p_event_type: "media.persist_requested",
+      p_entity_kind: "message",
+      p_entity_id: message.id,
+      p_payload: { message_id: message.id, conversation_id: group.conversation_id },
+      p_metadata: { source: "waha_webhook", request_id: requestId },
+      p_organization_id: session.organization_id,
+    } as never);
+    if (mediaError) logger.error("waha.ingest: group media persist request failed", { code: mediaError.code });
+  }
+  await enriquecerContatoDeGrupo(admin, session, group.contact_id, chatId);
+}
+
 async function handleInbound(
   admin: Admin,
   session: Session,
@@ -566,7 +779,10 @@ async function handleInbound(
 ): Promise<void> {
   const chatId = p.from ?? "";
   const parsed = parseChatId(chatId);
-  if (parsed.kind === "group") return; // grupos não fazem binding CRM
+  if (parsed.kind === "group") {
+    await handleGroupInbound(admin, session, p, requestId, chatId);
+    return;
+  }
   if (!p.id) return;
   // WAHA emite eventos vazios p/ status/read-receipt/presence — não viram mensagem.
   const texto = bodyOf(p);
@@ -767,8 +983,8 @@ async function handleOutboundFromUserPhone(
   // celular e o CRM não mostra", sem nenhum erro em log: o webhook devolvia 200.
   const chatId = p.to ?? chatIdFromWaMessageId(p.id ?? "") ?? p.from ?? "";
   const parsed = parseChatId(chatId);
-  if (parsed.kind === "group") return;
-  if (!p.id) return;
+  const isGroup = parsed.kind === "group";
+  if (!p.id || (isGroup && !p.id.trim())) return;
   if (!p.body && !mediaUrlOf(p) && !p.hasMedia) return;
   // Idem inbound. Aqui o caso que mais dói é o chatId vazio: é literalmente o
   // defeito do #108 — mensagem que o dono digitou no celular sem `to`, sem id
@@ -779,7 +995,7 @@ async function handleOutboundFromUserPhone(
   // MORTA (varri 12 valores de `to` e nenhum a disparava, porque o único falsy
   // já era classificado como grupo uma linha acima) e voltaria a viver como
   // duplicata desta guarda, descartando calado justamente o caso que se quer ver.
-  if (!ehEnderecavel(parsed)) {
+  if (!isGroup && !ehEnderecavel(parsed)) {
     await avisarChatNaoReconhecido(admin, session.organization_id, session.id, chatId, "outbound");
     return;
   }
@@ -819,7 +1035,9 @@ async function handleOutboundFromUserPhone(
   // Medido na produção — inbound 56/56 e outbound 20/20 trazem o campo, e as
   // amostras de outbound mostram o número do cliente. Nome e telefone vêm de
   // lugares diferentes do mesmo payload, e só um deles inverte no envio.
-  const contactId = await upsertContact(
+  const group = isGroup ? await upsertGroupConversation(admin, session, chatId) : null;
+  if (isGroup && !group) return;
+  const contactId = group?.contact_id ?? await upsertContact(
     admin,
     session.organization_id,
     parsed,
@@ -828,7 +1046,7 @@ async function handleOutboundFromUserPhone(
     telefoneAlternativoDe(p),
   );
   if (!contactId) return;
-  const conversationId = await upsertConversation(admin, session.organization_id, contactId, session.id);
+  const conversationId = group?.conversation_id ?? await upsertConversation(admin, session.organization_id, contactId, session.id);
   if (!conversationId) return;
 
   const now = new Date().toISOString();
@@ -849,7 +1067,7 @@ async function handleOutboundFromUserPhone(
       media_mime: mediaMimeOf(p),
       sent_via: "external_device",
       sent_at: p.timestamp ? new Date(p.timestamp * 1000).toISOString() : now,
-      metadata: { raw_type: p.type, fromMe: true },
+      metadata: { raw_type: p.type, fromMe: true, ...(isGroup ? groupMetadata(p, chatId) : {}) },
     })
     .select("id")
     .maybeSingle();
@@ -867,7 +1085,7 @@ async function handleOutboundFromUserPhone(
     return;
   }
 
-  await markConversation(admin, session.organization_id, conversationId, "outbound", previewFromMessage(p), now);
+  await markConversation(admin, session.organization_id, conversationId, "outbound", previewFromMessage(p), isGroup && p.timestamp ? new Date(p.timestamp * 1000).toISOString() : now);
 
   // Uma PESSOA respondeu este cliente pelo celular, fora do composer/IA — a IA
   // para NESTA conversa para não responder junto, por uma janela que expira
@@ -896,12 +1114,14 @@ async function handleOutboundFromUserPhone(
   //   silenciar o bot -> ESTRITO    (na dúvida NÃO cala; calar a IA por engano é
   //                                  pior que não calar)
   // Quem reaproveitar esta condição para pular o INSERT reabre o #108.
-  if (!(await ehEcoDeEnvioNosso(admin, session.organization_id, conversationId, p))) {
-    await pausarIaPorAtendimentoManual(admin, {
-      organizationId: session.organization_id,
-      conversationId,
-      canal: "waha",
-    });
+  if (!isGroup) {
+    if (!(await ehEcoDeEnvioNosso(admin, session.organization_id, conversationId, p))) {
+      await pausarIaPorAtendimentoManual(admin, {
+        organizationId: session.organization_id,
+        conversationId,
+        canal: "waha",
+      });
+    }
   }
 
   await audit({

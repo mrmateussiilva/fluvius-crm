@@ -111,3 +111,12 @@ export function ackToStatus(ack: number | null | undefined): Message["status"] {
   if (ack >= 1) return "sent";
   return "sending";
 }
+
+/** Autor de grupo no histórico. IDs opacos são fallback; nunca viram contato. */
+export function groupMessageSender(metadata: Record<string, unknown> | null | undefined): string | null {
+  if (metadata?.is_group !== true) return null;
+  for (const value of [metadata.group_sender_name, metadata.group_sender_id]) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}

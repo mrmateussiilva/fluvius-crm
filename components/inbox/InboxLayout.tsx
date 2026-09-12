@@ -480,6 +480,7 @@ export function InboxLayout({ initialSelectedId = null }: InboxLayoutProps = {})
               />
             )}
             <Composer
+              isGroup={selectedConversation.is_group}
               ref={composerRef}
               conversationId={selectedConversation.id}
               blockedReason={supportReadonly ? "Acompanhamento somente leitura" : blockedReason}
