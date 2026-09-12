@@ -364,3 +364,13 @@ describe("limiar de sentimento — o agente da conversa é quem manda (#486)", (
     ).toBeNull();
   });
 });
+
+
+it("grupo não chama o classificador de sentimento", async () => {
+  const banco = montarBanco({ sessaoDaConversa: SESSAO_CLINICA });
+  banco.conversations[0]!.is_group = true;
+  vi.mocked(createAdminClient).mockReturnValue(fazerAdmin(banco, []) as never);
+  const result = await processSentiment(evento);
+  expect(result).toMatchObject({ skipped: true, reason: "group_conversation" });
+  expect(generateObject).not.toHaveBeenCalled();
+});

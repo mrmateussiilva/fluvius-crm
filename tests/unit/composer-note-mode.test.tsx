@@ -23,11 +23,11 @@ vi.mock("@/hooks/inbox/useDraftReply", () => ({
 
 import { Composer } from "@/components/inbox/Composer";
 
-function renderComposer() {
+function renderComposer(isGroup = false) {
   const qc = new QueryClient();
   return render(
     <QueryClientProvider client={qc}>
-      <Composer conversationId="conv-1" />
+      <Composer conversationId="conv-1" isGroup={isGroup} />
     </QueryClientProvider>,
   );
 }
@@ -36,6 +36,14 @@ describe("Composer + modo nota interna", () => {
   beforeEach(() => {
     sendMock.mockClear();
     createNoteMock.mockClear();
+  });
+
+  it("grupo permite envio manual e não oferece sugestão de IA", () => {
+    renderComposer(true);
+    expect(screen.queryByRole("button", { name: /sugerir resposta/i })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/mensagem/i), { target: { value: "oi grupo" } });
+    fireEvent.click(screen.getByRole("button", { name: /^enviar$/i }));
+    expect(sendMock).toHaveBeenCalledWith(expect.objectContaining({ conversation_id: "conv-1", body: "oi grupo" }), expect.anything());
   });
 
   it("modo reply (default): envia normal via useSendMessage", () => {

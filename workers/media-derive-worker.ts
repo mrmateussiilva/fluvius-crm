@@ -43,6 +43,7 @@ interface MessageRow {
   media_mime: string | null;
   media_storage_path: string | null;
   media_derived_status: string | null;
+  conversations: { is_group: boolean; group_chat_id: string | null } | null;
 }
 
 export async function deriveMessageMedia(row: EventRow): Promise<HandlerResult> {
@@ -53,7 +54,7 @@ export async function deriveMessageMedia(row: EventRow): Promise<HandlerResult> 
   const admin = createAdminClient();
   const { data, error } = await admin
     .from("messages")
-    .select("id, organization_id, type, media_mime, media_storage_path, media_derived_status")
+    .select("id, organization_id, type, media_mime, media_storage_path, media_derived_status, conversations:conversation_id(is_group, group_chat_id)")
     .eq("id", messageId)
     .eq("organization_id", row.organization_id)
     .maybeSingle();
@@ -61,6 +62,10 @@ export async function deriveMessageMedia(row: EventRow): Promise<HandlerResult> 
 
   const msg = data as MessageRow | null;
   if (!msg?.media_storage_path) return { consumer_key, status: "skipped", detail: "no media" };
+  // Persistir anexos continua permitido; transcrição/visão não roda em grupos.
+  if (msg.conversations?.is_group || msg.conversations?.group_chat_id) {
+    return { consumer_key, status: "skipped", detail: "group_conversation" };
+  }
   if (msg.media_derived_status === "ready") return { consumer_key, status: "skipped", detail: "already derived" };
   if (!TIPOS_DERIVAVEIS.has(msg.type)) return { consumer_key, status: "skipped", detail: `type ${msg.type}` };
   // Vídeo é opt-in (custo: ffmpeg + N chamadas de visão): só deriva se algum agente

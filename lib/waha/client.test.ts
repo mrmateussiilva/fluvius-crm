@@ -291,7 +291,7 @@ describe("sessões: conflito conhecido só converge com identidade e pós-condi�
   type Step = { method: string; path: string; status: number; body?: unknown };
   const name = "qa/session";
   const sessionPath = "/api/sessions/qa%2Fsession";
-  const config = { ignore: { status: true, broadcast: true, channels: true, groups: true } };
+  const config = { ignore: { status: true, broadcast: true, channels: true, groups: false } };
   const session = (status = "STOPPED", extra: Record<string, unknown> = {}) =>
     ({ name, status, config, engine: { engine: "NOWEB" }, ...extra });
   const duplicate = { statusCode: 422, error: "Unprocessable Entity", message: `Session '${name}' already exists. Use PUT to update it.` };
@@ -343,7 +343,7 @@ describe("sessões: conflito conhecido só converge com identidade e pós-condi�
     ["outra identidade", { name: "outra" }],
     ["outro engine", { engine: { engine: "WEBJS" } }],
     ["config inválida", { config: null }],
-    ["filtro explícito incompatível", { config: { ignore: { groups: false } } }],
+    ["filtro explícito incompatível", { config: { ignore: { channels: false } } }],
   ])("conflito de create com %s falha sem tomar a sessão", async (_label, extra) => {
     await receive([create(422, duplicate), read(session("STOPPED", extra))], async (c) => {
       await expect(c.startSession(name)).rejects.toThrow("waha_create_422");

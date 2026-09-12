@@ -606,7 +606,7 @@ async function buildContext(input: BuildContextInput): Promise<GuardDecision> {
   const { data: conv, error: convErr } = await admin
     .from("conversations")
     .select(
-      "id, organization_id, contact_id, channel_session_id, last_inbound_at, bot_silenced_until, last_handoff_at, assignee_kind, contacts:contact_id(id, display_name, locale, is_blocked, force_human)",
+      "id, organization_id, contact_id, channel_session_id, is_group, group_chat_id, last_inbound_at, bot_silenced_until, last_handoff_at, assignee_kind, contacts:contact_id(id, display_name, locale, is_blocked, force_human)",
     )
     .eq("id", input.conversationId)
     .eq("organization_id", input.organizationId)
@@ -614,6 +614,7 @@ async function buildContext(input: BuildContextInput): Promise<GuardDecision> {
 
   if (convErr) return skip("conversation_not_found", convErr.message);
   if (!conv) return skip("conversation_not_found");
+  if (conv.is_group || conv.group_chat_id) return skip("group_conversation");
 
   type ConvRow = {
     id: string;

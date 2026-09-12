@@ -51,6 +51,7 @@ const MSG_ID = "55555555-5555-4555-8555-555555555555";
 const CONTACT_ID = "66666666-6666-4666-8666-666666666666";
 
 interface ConvOpts {
+  isGroup?: boolean;
   aiGate?: string | null;
   aiAuthorizedAt?: string | null;
   convError?: string;
@@ -58,6 +59,7 @@ interface ConvOpts {
 
 function makeAdminStub(opts: ConvOpts, queried: string[]) {
   const convRow = {
+    is_group: opts.isGroup ?? false,
     id: CONV_ID,
     organization_id: ORG_ID,
     contact_id: CONTACT_ID,
@@ -166,4 +168,13 @@ describe("ai-response-worker (legado) · gate de elegibilidade", () => {
     expect(result.status).toBe("skipped");
     expect(result.reason).toBe("nao_elegivel_para_ia");
   });
+});
+
+
+it("grupo nunca chega à IA legada, mesmo com gate open", async () => {
+  const queried: string[] = [];
+  vi.mocked(createAdminClient).mockReturnValue(makeAdminStub({ isGroup: true }, queried) as never);
+  const result = await processMessageReceived({ id: "group-event", event_type: "message.received", entity_kind: "message", metadata: {}, consumed_by: [], attempts: 0, organization_id: ORG_ID, entity_id: MSG_ID, payload: { message_id: MSG_ID, conversation_id: CONV_ID } });
+  expect(result).toMatchObject({ status: "skipped", reason: "group_conversation" });
+  expect(queried).toEqual(["conversations"]);
 });

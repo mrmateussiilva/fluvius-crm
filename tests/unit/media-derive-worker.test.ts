@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const downloadMock = vi.fn();
 const updateEqMock = vi.fn();
 const messageRow = {
+  conversations: { is_group: false, group_chat_id: null as string | null },
   id: "msg1",
   organization_id: "org1",
   type: "audio" as string,
@@ -92,7 +93,17 @@ describe("deriveMessageMedia", () => {
     updateEqMock.mockReset();
     messageRow.media_derived_status = null;
     messageRow.type = "audio";
+    messageRow.conversations.is_group = false;
     vi.mocked(deriveMediaText).mockReset().mockResolvedValue("transcrição do áudio real");
+  });
+
+  it("grupo não baixa mídia para IA, não transcreve nem chama visão", async () => {
+    messageRow.conversations.is_group = true;
+    const result = await deriveMessageMedia(eventRow());
+    expect(result).toMatchObject({ status: "skipped", detail: "group_conversation" });
+    expect(downloadMock).not.toHaveBeenCalled();
+    expect(deriveMediaText).not.toHaveBeenCalled();
+    expect(updateEqMock).not.toHaveBeenCalled();
   });
 
   it("baixa a mídia, deriva e grava ready", async () => {

@@ -156,10 +156,14 @@ export async function processSentiment(event: EventRow): Promise<SentimentResult
     // deles não fazia nada. (issue #486)
     const { data: conversa } = await admin
       .from("conversations")
-      .select("id, channel_session_id, active_ai_agent_id")
+      .select("id, channel_session_id, active_ai_agent_id, is_group, group_chat_id")
       .eq("id", message.conversation_id)
       .eq("organization_id", event.organization_id)
       .maybeSingle();
+
+    if (conversa?.is_group || conversa?.group_chat_id) {
+      return { skipped: true, reason: "group_conversation" };
+    }
 
     // As versões PUBLICADAS ligadas ao número em que a conversa acontece — é
     // quem de fato responde ao cliente por aquela sessão. `null` (não consegui

@@ -492,3 +492,20 @@ describe("nenhum desfecho diz `sent` sem nada ter saído", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
+
+
+it("composer de grupo WAHA usa group_chat_id sem telefone no contato sintético", async () => {
+  vi.stubEnv("WAHA_API_BASE_URL", "http://localhost:3030");
+  vi.stubEnv("WAHA_API_KEY", "hash123");
+  const fetchMock = vi.fn(async (_url: unknown, _init?: RequestInit) => Response.json({ key: { id: "GROUP1" } }));
+  vi.stubGlobal("fetch", fetchMock);
+  const conversa = conversaCompleta({ provider: "waha", providerConversationId: null });
+  conversa.is_group = true;
+  conversa.group_chat_id = "120363000000001@g.us";
+  conversa.contacts = { phone_number: null, wa_identity: null, wa_lid: null, is_blocked: false };
+  const { supabase } = makeSupabase(conversa);
+  const msg = await sendMessageHandler(supabase, ctx, texto());
+  expect(msg.status).toBe("sent");
+  const payload = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit | undefined)?.body ?? "{}"));
+  expect(payload.chatId).toBe(conversa.group_chat_id);
+});

@@ -108,3 +108,11 @@ describe("o elo que some sem barulho", () => {
     expect(fonte).toMatch(/length > 1/);
   });
 });
+
+
+it("grupo reaproveita display_name do contato sintético e não indica IA", () => {
+  const conversation = { ...base, is_group: true, contacts: { ...base.contacts!, display_name: "Grupo WhatsApp • 12345678", phone_number: null } };
+  render(<ConversationListItem conversation={conversation} isSelected={false} onSelect={() => {}} automaticoDaOrg={true} mostrarAtendente />);
+  expect(screen.getByText("Grupo WhatsApp • 12345678")).toBeInTheDocument();
+  expect(screen.queryByText("Automático")).not.toBeInTheDocument();
+});

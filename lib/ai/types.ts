@@ -31,6 +31,7 @@ export interface RecentMessage {
 
 /** Reasons the worker may decide to skip generating a response. */
 export type SkipReason =
+  | "group_conversation"
   | "ai_gateway_key_missing"
   | "agent_inactive_or_missing"
   | "kb_version_missing"

@@ -37,6 +37,13 @@ export async function generateReplyDraft(
     agent?: PublishedAgentConfig;
   },
 ) {
+  const { rows: conversations } = await pool.query<{ is_group: boolean; group_chat_id: string | null }>(
+    "select is_group, group_chat_id from conversations where organization_id=$1 and id=$2",
+    [input.organizationId, input.conversationId],
+  );
+  if (conversations[0]?.is_group || conversations[0]?.group_chat_id) {
+    throw new Error("reply_group_not_supported");
+  }
   const agent =
     input.agent ??
     (await loadConversationAgentConfig(

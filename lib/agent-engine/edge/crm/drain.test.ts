@@ -291,3 +291,19 @@ it("anti-backlog: ordena a Ãºltima inbound por coalesce(sent_at, created_at), nÃ
   expect(consultaUltima).toContain('coalesce(sent_at, created_at) desc');
   expect(consultaUltima).not.toContain('nulls last');
 });
+
+
+it('grupo: evento termina SEM job, mesmo com dispatch solicitado por outro produtor', async () => {
+  const calls: string[] = [];
+  const query = vi.fn((sql: string) => {
+    calls.push(sql);
+    if (sql.includes('returning e.id')) return { rows: [event] };
+    if (sql.includes('ai_dispatch_mode')) return { rows: [{ mode: 'internal' }] };
+    if (sql.includes('select is_group')) return { rows: [{ is_group: true }] };
+    return { rows: [] };
+  });
+  await drainTick({ query } as unknown as pg.Pool, knobs, log);
+  expect(calls.some((s) => s.includes('select is_group'))).toBe(true);
+  expect(calls.some((s) => s.includes('job_queue'))).toBe(false);
+  expect(calls.some((s) => s.includes("status = 'done'"))).toBe(true);
+});

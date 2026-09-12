@@ -12,7 +12,7 @@ function fixture() {
     finishes.push(args);
     return { data: { ...channel, status: args.p_status }, error: null };
   }) } as unknown as SupabaseClient;
-  const transport = { getVerifiedSession: vi.fn(async () => null), createSession: vi.fn(async () => ({ created: true, session: { name: "owned", status: "STOPPED" } })),
+  const transport = { convergirConfigDaSessao: vi.fn(async () => {}), getVerifiedSession: vi.fn(async () => null), createSession: vi.fn(async () => ({ created: true, session: { name: "owned", status: "STOPPED" } })),
     startExistingSession: vi.fn(async () => ({ name: "owned", status: "SCAN_QR_CODE" })),
     deleteSession: vi.fn(async () => {}), stopSession: vi.fn(async () => {}) };
   return { db, transport, finishes, input: { organizationId: org, idempotencyKey: key, userId: key, requestId: key } };
@@ -65,4 +65,15 @@ describe("conexão recuperável", () => {
     expect((await connectWahaChannel(f.db, f.db, f.transport, f.input)).replay).toBe(true);
     expect(f.transport.createSession).not.toHaveBeenCalled();expect(f.transport.deleteSession).not.toHaveBeenCalled();
   });
+});
+
+
+it("reconexão converge o filtro legado de grupos antes de iniciar a sessão", async () => {
+  const f = fixture();
+  f.transport.createSession.mockResolvedValue({ created: false, session: {
+    name: "owned", status: "STOPPED", config: { ignore: { groups: true } },
+  } } as never);
+  await connectWahaChannel(f.db, f.db, f.transport, f.input);
+  expect(f.transport.convergirConfigDaSessao).toHaveBeenCalledWith("owned");
+  expect(f.transport.convergirConfigDaSessao.mock.invocationCallOrder[0]).toBeLessThan(f.transport.startExistingSession.mock.invocationCallOrder[0]!);
 });
